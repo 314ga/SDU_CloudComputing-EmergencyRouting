@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    iam.gke.io/gcp-service-account: service-a@cloudcomputingcourse-369518.iam.gserviceaccount.com
+  name: service-a
+  namespace: staging
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      serviceAccountName: service-a
+      containers:
+      - name: frontend
+        imagePullPolicy: IfNotPresent
+        image: gcr.io/cloudcomputingcourse-369518/cloudcomputing-sdu-backend:frontend35fa82da8f2b7b9d691b709a65399457fd581257
+        readinessProbe:
+          httpGet:
+            port: 80
+            path: /
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            port: 80
+            path: /
+          initialDelaySeconds: 30
+          periodSeconds: 20
+        resources:
+          requests:
+           memory: "25Mi"
+           cpu: "50m"
+          limits:
+            memory: "50Mi"
+            cpu: "100m"
+      tolerations:
+      - key: instance_type
+        value: frontend
+        effect: NoSchedule
+        operator: Equal
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: team
+                operator: In
+                values:
+                - frontend
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: team
+                operator: In
+                values:
+                - frontend
+            topologyKey: kubernetes.io/hostname
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: staging
+  labels:
+    app: frontend
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+  - name: 80-80
+    port: 80
+    protocol: TCP     
+    targetPort: 80
+
+---
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-frontend
+  namespace: staging
+spec:
+  maxReplicas: 17
+  minReplicas: 5
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60

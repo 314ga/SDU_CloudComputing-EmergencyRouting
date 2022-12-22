@@ -1,0 +1,176 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    iam.gke.io/gcp-service-account: service-a@cloudcomputingcourse-369518.iam.gserviceaccount.com
+  name: service-a
+  namespace: staging
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: service-a
+      containers:
+      - name: backend
+        ports:
+        - name: backend
+          containerPort: 80
+        imagePullPolicy: IfNotPresent
+        image: gcr.io/cloudcomputingcourse-369518/cloudcomputing-sdu-backend:backend98855fc7775846dee4cbd2be219e1510142cb604
+        readinessProbe:
+          httpGet:
+            port: 80
+            path: /health
+          initialDelaySeconds: 50
+          periodSeconds: 20
+        livenessProbe:
+          httpGet:
+            port: 80
+            path: /health
+          initialDelaySeconds: 50
+          periodSeconds: 20
+        resources:
+          requests:
+           memory: "150Mi"
+           cpu: "100m"
+          limits:
+            memory: "285Mi"
+            cpu: "285m"
+        env:                     # Environment variables passed to the container
+        - name: PORT
+          value: "80"
+        - name: MONGO_DB_CONNECTION_STRING
+          value: mongodb+srv://314ga:CloudComputing@cluster0.updnh13.mongodb.net/CloudComputing
+        - name: MONGO_DB_NAME
+          value: CloudComputing
+        - name: REDIS_URI
+          value: redis://User:Tr.7TZBLR6.!9eU@redis-15507.c299.asia-northeast1-1.gce.cloud.redislabs.com:15507
+        - name: NODE_ENV
+          value: production
+      tolerations:
+      - key: instance_type
+        value: backend
+        effect: NoSchedule
+        operator: Equal
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: team
+                operator: In
+                values:
+                - backend
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: team
+                operator: In
+                values:
+                - backend
+            topologyKey: kubernetes.io/hostname
+     
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service-ing
+  namespace: staging
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "backend-backendconfig"}'
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 1800
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-ingress
+  namespace: staging 
+  annotations:
+    cloud.google.com/backend-config: '{"default": "backend-backendconfig"}'
+spec:
+  defaultBackend:
+      service:
+        name: backend-service-ing
+        port:
+          number: 80
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: backend-service-ing
+            port:
+              number: 80
+
+---
+
+apiVersion: cloud.google.com/v1beta1
+kind: BackendConfig
+metadata:
+  name: backend-backendconfig
+  namespace: staging
+spec:
+  timeoutSec: 1800
+  connectionDraining:
+    drainingTimeoutSec: 1800
+  sessionAffinity:
+    affinityType: "CLIENT_IP"
+
+
+---
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-backend
+  namespace: staging
+spec:
+  maxReplicas: 7
+  minReplicas: 1
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
